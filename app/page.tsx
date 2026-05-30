@@ -6,7 +6,6 @@ import {
   type Team, type StatKey,
 } from "./data";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
 interface GameTeam { displayName: string; abbr: string; score: string | null; color: string; }
 interface Game {
   id: string; name: string; date: string;
@@ -14,22 +13,17 @@ interface Game {
   home: GameTeam; away: GameTeam;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 const teamByName = Object.fromEntries(TEAMS.map(t => [t.team, t]));
-
 function getTeam(displayName: string): Team | undefined {
-  const mapped = ESPN_NAME_MAP[displayName] ?? displayName;
-  return teamByName[mapped];
+  return teamByName[ESPN_NAME_MAP[displayName] ?? displayName];
 }
-
 function getAdvantage(offTeam: string, defTeam: string, key: StatKey): number {
   const offR = OFF_RANKS[key]?.[offTeam];
   const oppR = OPP_RANKS[key]?.[defTeam];
   if (!offR || !oppR) return 0;
-  return oppR - offR; // positive = offense has better rank than opponent's defense
+  return oppR - offR;
 }
 
-// ── Shared styles ─────────────────────────────────────────────────────────────
 const mono: React.CSSProperties = { fontFamily: "'DM Mono','Courier New',monospace" };
 
 function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
@@ -58,8 +52,11 @@ function ViewBtn({ active, onClick, children }: { active: boolean; onClick: () =
 }
 
 // ── Matchup Card ──────────────────────────────────────────────────────────────
+type MatchupView = "off-vs-def" | "away-off" | "home-off" | "away-def" | "home-def";
+
 function MatchupCard({ game }: { game: Game }) {
   const [open, setOpen] = useState(true);
+  const [mView, setMView] = useState<MatchupView>("off-vs-def");
 
   const awayTeam = getTeam(game.away.displayName);
   const homeTeam = getTeam(game.home.displayName);
@@ -70,12 +67,150 @@ function MatchupCard({ game }: { game: Game }) {
   const isFinal = game.status === "Final";
   const gameTime = new Date(game.date).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 
+  const mViewBtn = (v: MatchupView, label: string, color?: string) => (
+    <button key={v} onClick={() => setMView(v)} style={{
+      background: mView === v ? (color ? `${color}33` : "#1e293b") : "transparent",
+      border: `1px solid ${mView === v ? (color ?? "#475569") : "#2d2d4e"}`,
+      color: mView === v ? (color ?? "#f1f5f9") : "#64748b",
+      padding: "4px 10px", borderRadius: 5, cursor: "pointer",
+      fontSize: 9, letterSpacing: 1, fontWeight: mView === v ? 700 : 400,
+      textTransform: "uppercase", ...mono,
+    }}>{label}</button>
+  );
+
+  // Single-team stat table (their OFF or their OPP DEF)
+  function SingleTeamTable({ team, side, teamColors }: { team: Team; side: "off" | "def"; teamColors: { color: string; alt: string } }) {
+    const stats = side === "off" ? team.off : team.opp;
+    const ranks = side === "off" ? OFF_RANKS : OPP_RANKS;
+    const isGood = (key: StatKey) => side === "off"
+      ? COLS.find(c => c.key === key)?.offHiB ?? true
+      : COLS.find(c => c.key === key)?.oppHiB ?? false;
+
+    return (
+      <div>
+        <div style={{ fontSize: 9, color: "#475569", letterSpacing: 1, marginBottom: 10, textAlign: "center" }}>
+          {side === "off" ? "OFFENSIVE STATS" : "OPPONENT DEFENSIVE STATS (what they allow)"}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: 8 }}>
+          {MATCHUP_COLS.map(({ key, label, desc }) => {
+            const val = stats[key];
+            const rank = ranks[key]?.[team.team];
+            return (
+              <div key={key} style={{ background: "#07070e", borderRadius: 6, padding: "10px 12px", border: "1px solid #111118", textAlign: "center" }}>
+                <div style={{ fontSize: 8, color: "#334155", letterSpacing: 1, marginBottom: 4 }}>{label}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: rankColor(rank, TOTAL) }}>{fmt(val, key)}</div>
+                <div style={{ fontSize: 8, color: "#334155", marginTop: 2 }}>#{rank} of {TOTAL}</div>
+                <div style={{ fontSize: 8, color: "#1e293b", marginTop: 1 }}>{desc}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // Head-to-head matchup view (default)
+  function HeadToHeadView() {
+    if (!awayTeam || !homeTeam) return (
+      <div style={{ color: "#475569", fontSize: 11, textAlign: "center", padding: 20 }}>
+        No 2025 season data for one or both teams.
+      </div>
+    );
+
+    return (
+      <>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 48px 1fr", marginBottom: 10 }}>
+          <div style={{ fontSize: 10, color: awayColors.color, fontWeight: 700, letterSpacing: 1 }}>
+            {game.away.displayName.toUpperCase()} <span style={{ color: "#334155", fontWeight: 400 }}>OFF</span>
+          </div>
+          <div />
+          <div style={{ fontSize: 10, color: homeColors.color, fontWeight: 700, letterSpacing: 1, textAlign: "right" }}>
+            <span style={{ color: "#334155", fontWeight: 400 }}>OFF </span>{game.home.displayName.toUpperCase()}
+          </div>
+        </div>
+
+        {MATCHUP_COLS.map(({ key, label }) => {
+          const awayOff = awayTeam.off[key];
+          const homeOff = homeTeam.off[key];
+          const homeAllows = homeTeam.opp[key];
+          const awayAllows = awayTeam.opp[key];
+          const awayOffR = OFF_RANKS[key]?.[awayTeam.team];
+          const homeOffR = OFF_RANKS[key]?.[homeTeam.team];
+          const awayDefR = OPP_RANKS[key]?.[awayTeam.team];
+          const homeDefR = OPP_RANKS[key]?.[homeTeam.team];
+          const awayAdv = getAdvantage(awayTeam.team, homeTeam.team, key);
+          const homeAdv = getAdvantage(homeTeam.team, awayTeam.team, key);
+          const hasEdge = Math.abs(awayAdv - homeAdv) >= 3;
+          const edgeDir = awayAdv > homeAdv ? "away" : "home";
+          const maxVal = Math.max(+awayOff || 0, +homeOff || 0, 0.01);
+          const awayPct = Math.round(((+awayOff || 0) / maxVal) * 100);
+          const homePct = Math.round(((+homeOff || 0) / maxVal) * 100);
+
+          return (
+            <div key={key} style={{ marginBottom: 12 }}>
+              <div style={{ textAlign: "center", fontSize: 9, color: "#475569", letterSpacing: 1, marginBottom: 3 }}>{label}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "76px 1fr 48px 1fr 76px", alignItems: "center", gap: 6 }}>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: rankColor(awayOffR, TOTAL) }}>{fmt(awayOff, key)}</div>
+                  <div style={{ fontSize: 8, color: "#334155" }}>off #{awayOffR}</div>
+                </div>
+                <div style={{ height: 5, background: "#111118", borderRadius: 3, overflow: "hidden", display: "flex", justifyContent: "flex-end" }}>
+                  <div style={{ height: "100%", width: `${awayPct}%`, background: awayColors.color, borderRadius: 3, opacity: 0.8 }} />
+                </div>
+                <div style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: hasEdge ? (edgeDir === "away" ? awayColors.color : homeColors.color) : "#1e293b" }}>
+                  {hasEdge ? (edgeDir === "away" ? "←" : "→") : "·"}
+                </div>
+                <div style={{ height: 5, background: "#111118", borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${homePct}%`, background: homeColors.color, borderRadius: 3, opacity: 0.8 }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: rankColor(homeOffR, TOTAL) }}>{fmt(homeOff, key)}</div>
+                  <div style={{ fontSize: 8, color: "#334155" }}>off #{homeOffR}</div>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "76px 1fr 48px 1fr 76px", gap: 6, marginTop: 2 }}>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 10, color: "#64748b" }}>vs {fmt(homeAllows, key)} allowed</div>
+                  <div style={{ fontSize: 8, color: "#1e293b" }}>home def #{homeDefR}</div>
+                </div>
+                <div /><div /><div />
+                <div>
+                  <div style={{ fontSize: 10, color: "#64748b" }}>vs {fmt(awayAllows, key)} allowed</div>
+                  <div style={{ fontSize: 8, color: "#1e293b" }}>away def #{awayDefR}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Edge summary */}
+        <div style={{ marginTop: 14, padding: "10px 14px", background: "#07070e", borderRadius: 7, border: "1px solid #111118" }}>
+          <div style={{ fontSize: 9, color: "#334155", letterSpacing: 1, marginBottom: 8 }}>EDGE SUMMARY · 2025 SEASON RANKS</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {MATCHUP_COLS.map(({ key, label }) => {
+              const awayA = getAdvantage(awayTeam.team, homeTeam.team, key);
+              const homeA = getAdvantage(homeTeam.team, awayTeam.team, key);
+              const winner = awayA > homeA ? "away" : homeA > awayA ? "home" : "push";
+              const diff = Math.abs(awayA - homeA);
+              const c = winner === "away" ? awayColors.color : winner === "home" ? homeColors.color : "#475569";
+              const abbr = winner === "away" ? game.away.abbr : winner === "home" ? game.home.abbr : null;
+              return (
+                <div key={key} style={{ padding: "4px 9px", borderRadius: 4, fontSize: 9, fontWeight: 600, background: `${c}18`, border: `1px solid ${c}44`, color: c }}>
+                  {label}: {abbr ? `${abbr} +${diff}` : "EVEN"}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </>
+    );
+  }
+
   return (
     <div style={{ background: "#0d0d1a", border: "1px solid #1e1e3a", borderRadius: 10, overflow: "hidden", marginBottom: 14, ...mono }}>
-      {/* Header */}
+      {/* Game header */}
       <div onClick={() => setOpen(o => !o)} style={{ cursor: "pointer", padding: "14px 18px", background: "#0a0a16", borderBottom: open ? "1px solid #1e1e3a" : "none" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-          {/* Teams + scores */}
           <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
             {/* Away */}
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -88,9 +223,7 @@ function MatchupCard({ game }: { game: Game }) {
               </div>
               {(isLive || isFinal) && <div style={{ fontSize: 22, fontWeight: 800, color: "#f1f5f9", minWidth: 30, textAlign: "right" }}>{game.away.score ?? "—"}</div>}
             </div>
-
             <div style={{ color: "#2d2d4e", fontSize: 13, fontWeight: 700 }}>@</div>
-
             {/* Home */}
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {(isLive || isFinal) && <div style={{ fontSize: 22, fontWeight: 800, color: "#f1f5f9", minWidth: 30 }}>{game.home.score ?? "—"}</div>}
@@ -103,8 +236,6 @@ function MatchupCard({ game }: { game: Game }) {
                 onError={(e) => (e.currentTarget.style.display = "none")} />
             </div>
           </div>
-
-          {/* Status */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
             <div style={{
               display: "inline-block", borderRadius: 4, padding: "3px 9px", fontSize: 9, fontWeight: 700, letterSpacing: 1,
@@ -114,123 +245,30 @@ function MatchupCard({ game }: { game: Game }) {
               {isLive ? `🔴 ${game.statusDetail}` : isFinal ? "FINAL" : gameTime}
             </div>
             {game.venue && <div style={{ fontSize: 9, color: "#334155" }}>{game.venue}</div>}
-            <div style={{ fontSize: 9, color: "#334155" }}>{open ? "▲ collapse" : "▼ matchup"}</div>
+            <div style={{ fontSize: 9, color: "#334155" }}>{open ? "▲ collapse" : "▼ expand"}</div>
           </div>
         </div>
       </div>
 
-      {/* Matchup breakdown */}
+      {/* Body */}
       {open && (
-        <div style={{ padding: "16px 18px" }}>
-          {(!awayTeam || !homeTeam) ? (
-            <div style={{ color: "#475569", fontSize: 11, textAlign: "center", padding: 20 }}>
-              No 2025 season data for one or both teams (expansion team).
-            </div>
-          ) : (
-            <>
-              {/* Team labels */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 48px 1fr", marginBottom: 10 }}>
-                <div style={{ fontSize: 10, color: awayColors.color, fontWeight: 700, letterSpacing: 1 }}>
-                  {game.away.displayName.toUpperCase()}
-                  <span style={{ color: "#334155", fontWeight: 400 }}> OFF</span>
-                </div>
-                <div />
-                <div style={{ fontSize: 10, color: homeColors.color, fontWeight: 700, letterSpacing: 1, textAlign: "right" }}>
-                  <span style={{ color: "#334155", fontWeight: 400 }}>OFF </span>
-                  {game.home.displayName.toUpperCase()}
-                </div>
-              </div>
+        <div style={{ padding: "14px 18px" }}>
+          {/* View toggle */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 9, color: "#334155", letterSpacing: 1, marginRight: 4 }}>VIEW:</span>
+            {mViewBtn("off-vs-def", "⚡ OFF vs DEF")}
+            {awayTeam && mViewBtn("away-off", `${game.away.abbr} Offense`, awayColors.color)}
+            {awayTeam && mViewBtn("away-def", `${game.away.abbr} Defense`, awayColors.color)}
+            {homeTeam && mViewBtn("home-off", `${game.home.abbr} Offense`, homeColors.color)}
+            {homeTeam && mViewBtn("home-def", `${game.home.abbr} Defense`, homeColors.color)}
+          </div>
 
-              {MATCHUP_COLS.map(({ key, label }) => {
-                const awayOff = awayTeam.off[key];
-                const homeOff = homeTeam.off[key];
-                const homeAllows = homeTeam.opp[key]; // what home D allows
-                const awayAllows = awayTeam.opp[key]; // what away D allows
-
-                const awayOffR = OFF_RANKS[key]?.[awayTeam.team];
-                const homeOffR = OFF_RANKS[key]?.[homeTeam.team];
-                const awayDefR = OPP_RANKS[key]?.[awayTeam.team];
-                const homeDefR = OPP_RANKS[key]?.[homeTeam.team];
-
-                const awayAdv = getAdvantage(awayTeam.team, homeTeam.team, key);
-                const homeAdv = getAdvantage(homeTeam.team, awayTeam.team, key);
-                const hasEdge = Math.abs(awayAdv - homeAdv) >= 3;
-                const edgeDir = awayAdv > homeAdv ? "away" : "home";
-
-                const maxVal = Math.max(+awayOff || 0, +homeOff || 0, 0.01);
-                const awayPct = Math.round(((+awayOff || 0) / maxVal) * 100);
-                const homePct = Math.round(((+homeOff || 0) / maxVal) * 100);
-
-                return (
-                  <div key={key} style={{ marginBottom: 12 }}>
-                    <div style={{ textAlign: "center", fontSize: 9, color: "#475569", letterSpacing: 1, marginBottom: 3 }}>{label}</div>
-
-                    {/* Main stat row */}
-                    <div style={{ display: "grid", gridTemplateColumns: "76px 1fr 48px 1fr 76px", alignItems: "center", gap: 6 }}>
-                      {/* Away off */}
-                      <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 15, fontWeight: 700, color: rankColor(awayOffR, TOTAL) }}>{fmt(awayOff, key)}</div>
-                        <div style={{ fontSize: 8, color: "#334155" }}>off #{awayOffR}</div>
-                      </div>
-                      {/* Away bar (right-aligned) */}
-                      <div style={{ height: 5, background: "#111118", borderRadius: 3, overflow: "hidden", display: "flex", justifyContent: "flex-end" }}>
-                        <div style={{ height: "100%", width: `${awayPct}%`, background: awayColors.color, borderRadius: 3, opacity: 0.8 }} />
-                      </div>
-                      {/* Edge indicator */}
-                      <div style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: hasEdge ? (edgeDir === "away" ? awayColors.color : homeColors.color) : "#1e293b" }}>
-                        {hasEdge ? (edgeDir === "away" ? "←" : "→") : "·"}
-                      </div>
-                      {/* Home bar */}
-                      <div style={{ height: 5, background: "#111118", borderRadius: 3, overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: `${homePct}%`, background: homeColors.color, borderRadius: 3, opacity: 0.8 }} />
-                      </div>
-                      {/* Home off */}
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 700, color: rankColor(homeOffR, TOTAL) }}>{fmt(homeOff, key)}</div>
-                        <div style={{ fontSize: 8, color: "#334155" }}>off #{homeOffR}</div>
-                      </div>
-                    </div>
-
-                    {/* Defense allowed sub-row */}
-                    <div style={{ display: "grid", gridTemplateColumns: "76px 1fr 48px 1fr 76px", gap: 6, marginTop: 2 }}>
-                      <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 10, color: "#64748b" }}>vs {fmt(homeAllows, key)} allowed</div>
-                        <div style={{ fontSize: 8, color: "#1e293b" }}>home def #{homeDefR}</div>
-                      </div>
-                      <div /><div /><div />
-                      <div>
-                        <div style={{ fontSize: 10, color: "#64748b" }}>vs {fmt(awayAllows, key)} allowed</div>
-                        <div style={{ fontSize: 8, color: "#1e293b" }}>away def #{awayDefR}</div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Edge summary */}
-              <div style={{ marginTop: 14, padding: "10px 14px", background: "#07070e", borderRadius: 7, border: "1px solid #111118" }}>
-                <div style={{ fontSize: 9, color: "#334155", letterSpacing: 1, marginBottom: 8 }}>EDGE SUMMARY · 2025 SEASON RANKS</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {MATCHUP_COLS.map(({ key, label }) => {
-                    const awayA = getAdvantage(awayTeam.team, homeTeam.team, key);
-                    const homeA = getAdvantage(homeTeam.team, awayTeam.team, key);
-                    const winner = awayA > homeA ? "away" : homeA > awayA ? "home" : "push";
-                    const diff = Math.abs(awayA - homeA);
-                    const c = winner === "away" ? awayColors.color : winner === "home" ? homeColors.color : "#475569";
-                    const abbr = winner === "away" ? game.away.abbr : winner === "home" ? game.home.abbr : null;
-                    return (
-                      <div key={key} style={{
-                        padding: "4px 9px", borderRadius: 4, fontSize: 9, fontWeight: 600,
-                        background: `${c}18`, border: `1px solid ${c}44`, color: c,
-                      }}>
-                        {label}: {abbr ? `${abbr} +${diff}` : "EVEN"}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </>
-          )}
+          {/* Content */}
+          {mView === "off-vs-def" && <HeadToHeadView />}
+          {mView === "away-off" && awayTeam && <SingleTeamTable team={awayTeam} side="off" teamColors={awayColors} />}
+          {mView === "away-def" && awayTeam && <SingleTeamTable team={awayTeam} side="def" teamColors={awayColors} />}
+          {mView === "home-off" && homeTeam && <SingleTeamTable team={homeTeam} side="off" teamColors={homeColors} />}
+          {mView === "home-def" && homeTeam && <SingleTeamTable team={homeTeam} side="def" teamColors={homeColors} />}
         </div>
       )}
     </div>
@@ -323,7 +361,6 @@ function StatsTable() {
         </table>
       </div>
 
-      {/* Detail card */}
       {selected && (
         <div style={{ marginTop: 14, background: "#0d0d1a", border: `1px solid ${selected.color}44`, borderRadius: 10, padding: 18, ...mono }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -387,7 +424,6 @@ export default function Page() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#07070e", color: "#e2e8f0", ...mono }}>
-      {/* Header */}
       <div style={{ background: "linear-gradient(135deg,#0d0d1f,#1a0a2e,#0d0d1f)", borderBottom: "1px solid #1e1e3a", padding: "18px 24px" }}>
         <div style={{ maxWidth: 1300, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div>
@@ -405,15 +441,13 @@ export default function Page() {
       </div>
 
       <div style={{ maxWidth: 1300, margin: "0 auto", padding: "18px 16px" }}>
-
-        {/* Matchups tab */}
         {tab === "matchups" && (
           <div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9" }}>{today}</div>
                 <div style={{ fontSize: 9, color: "#475569", letterSpacing: 1, marginTop: 2 }}>
-                  {loading ? "LOADING…" : `${games.length} GAME${games.length !== 1 ? "S" : ""} · OFFENSE VS OPP DEF ALLOWED (2025)`}
+                  {loading ? "LOADING…" : `${games.length} GAME${games.length !== 1 ? "S" : ""} · 2025 SEASON DATA`}
                   {lastFetch && !loading && ` · ${lastFetch.toLocaleTimeString()}`}
                 </div>
               </div>
@@ -428,7 +462,6 @@ export default function Page() {
                 <div style={{ fontSize: 11, letterSpacing: 2 }}>LOADING…</div>
               </div>
             )}
-
             {error && !loading && (
               <div style={{ background: "#130a0a", border: "1px solid #7f1d1d", borderRadius: 8, padding: 20, color: "#fca5a5", fontSize: 11, textAlign: "center" }}>
                 ⚠ {error}
@@ -436,7 +469,6 @@ export default function Page() {
                 <button onClick={loadGames} style={{ background: "transparent", border: "1px solid #7f1d1d", color: "#fca5a5", padding: "5px 12px", borderRadius: 5, cursor: "pointer", fontSize: 10, ...mono }}>Try Again</button>
               </div>
             )}
-
             {!loading && !error && games.length === 0 && (
               <div style={{ textAlign: "center", padding: 60, color: "#475569" }}>
                 <div style={{ fontSize: 36, marginBottom: 10 }}>🏀</div>
@@ -444,14 +476,11 @@ export default function Page() {
                 <div style={{ fontSize: 10, color: "#334155" }}>Check back on a game day.</div>
               </div>
             )}
-
             {!loading && games.map(g => <MatchupCard key={g.id} game={g} />)}
           </div>
         )}
 
-        {/* Stats tab */}
         {tab === "stats" && <StatsTable />}
-
       </div>
     </div>
   );
