@@ -17,12 +17,6 @@ const teamByName = Object.fromEntries(TEAMS.map(t => [t.team, t]));
 function getTeam(displayName: string): Team | undefined {
   return teamByName[ESPN_NAME_MAP[displayName] ?? displayName];
 }
-function getAdvantage(offTeam: string, defTeam: string, key: StatKey): number {
-  const offR = OFF_RANKS[key]?.[offTeam];
-  const oppR = OPP_RANKS[key]?.[defTeam];
-  if (!offR || !oppR) return 0;
-  return oppR - offR;
-}
 
 const mono: React.CSSProperties = { fontFamily: "'DM Mono','Courier New',monospace" };
 
@@ -52,11 +46,11 @@ function ViewBtn({ active, onClick, children }: { active: boolean; onClick: () =
 }
 
 // ── Matchup Card ──────────────────────────────────────────────────────────────
-type MatchupView = "off-vs-def" | "away-off" | "home-off" | "away-def" | "home-def";
+type StatSide = "off" | "def";
 
 function MatchupCard({ game }: { game: Game }) {
   const [open, setOpen] = useState(true);
-  const [mView, setMView] = useState<MatchupView>("off-vs-def");
+  const [side, setSide] = useState<StatSide>("off");
 
   const awayTeam = getTeam(game.away.displayName);
   const homeTeam = getTeam(game.home.displayName);
@@ -67,147 +61,24 @@ function MatchupCard({ game }: { game: Game }) {
   const isFinal = game.status === "Final";
   const gameTime = new Date(game.date).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 
-  const mViewBtn = (v: MatchupView, label: string, color?: string) => (
-    <button key={v} onClick={() => setMView(v)} style={{
-      background: mView === v ? (color ? `${color}33` : "#1e293b") : "transparent",
-      border: `1px solid ${mView === v ? (color ?? "#475569") : "#2d2d4e"}`,
-      color: mView === v ? (color ?? "#f1f5f9") : "#64748b",
-      padding: "4px 10px", borderRadius: 5, cursor: "pointer",
-      fontSize: 9, letterSpacing: 1, fontWeight: mView === v ? 700 : 400,
-      textTransform: "uppercase", ...mono,
-    }}>{label}</button>
-  );
+  // Which stats + ranks to use based on toggle
+  const getStats = (team: Team) => side === "off" ? team.off : team.opp;
+  const getRanks = (key: StatKey, teamName: string) =>
+    side === "off" ? OFF_RANKS[key]?.[teamName] : OPP_RANKS[key]?.[teamName];
 
-  // Single-team stat table (their OFF or their OPP DEF)
-  function SingleTeamTable({ team, side, teamColors }: { team: Team; side: "off" | "def"; teamColors: { color: string; alt: string } }) {
-    const stats = side === "off" ? team.off : team.opp;
-    const ranks = side === "off" ? OFF_RANKS : OPP_RANKS;
-    const isGood = (key: StatKey) => side === "off"
-      ? COLS.find(c => c.key === key)?.offHiB ?? true
-      : COLS.find(c => c.key === key)?.oppHiB ?? false;
-
-    return (
-      <div>
-        <div style={{ fontSize: 9, color: "#475569", letterSpacing: 1, marginBottom: 10, textAlign: "center" }}>
-          {side === "off" ? "OFFENSIVE STATS" : "OPPONENT DEFENSIVE STATS (what they allow)"}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: 8 }}>
-          {MATCHUP_COLS.map(({ key, label, desc }) => {
-            const val = stats[key];
-            const rank = ranks[key]?.[team.team];
-            return (
-              <div key={key} style={{ background: "#07070e", borderRadius: 6, padding: "10px 12px", border: "1px solid #111118", textAlign: "center" }}>
-                <div style={{ fontSize: 8, color: "#334155", letterSpacing: 1, marginBottom: 4 }}>{label}</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: rankColor(rank, TOTAL) }}>{fmt(val, key)}</div>
-                <div style={{ fontSize: 8, color: "#334155", marginTop: 2 }}>#{rank} of {TOTAL}</div>
-                <div style={{ fontSize: 8, color: "#1e293b", marginTop: 1 }}>{desc}</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
-  // Head-to-head matchup view (default)
-  function HeadToHeadView() {
-    if (!awayTeam || !homeTeam) return (
-      <div style={{ color: "#475569", fontSize: 11, textAlign: "center", padding: 20 }}>
-        No 2025 season data for one or both teams.
-      </div>
-    );
-
-    return (
-      <>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 48px 1fr", marginBottom: 10 }}>
-          <div style={{ fontSize: 10, color: awayColors.color, fontWeight: 700, letterSpacing: 1 }}>
-            {game.away.displayName.toUpperCase()} <span style={{ color: "#334155", fontWeight: 400 }}>OFF</span>
-          </div>
-          <div />
-          <div style={{ fontSize: 10, color: homeColors.color, fontWeight: 700, letterSpacing: 1, textAlign: "right" }}>
-            <span style={{ color: "#334155", fontWeight: 400 }}>OFF </span>{game.home.displayName.toUpperCase()}
-          </div>
-        </div>
-
-        {MATCHUP_COLS.map(({ key, label }) => {
-          const awayOff = awayTeam.off[key];
-          const homeOff = homeTeam.off[key];
-          const homeAllows = homeTeam.opp[key];
-          const awayAllows = awayTeam.opp[key];
-          const awayOffR = OFF_RANKS[key]?.[awayTeam.team];
-          const homeOffR = OFF_RANKS[key]?.[homeTeam.team];
-          const awayDefR = OPP_RANKS[key]?.[awayTeam.team];
-          const homeDefR = OPP_RANKS[key]?.[homeTeam.team];
-          const awayAdv = getAdvantage(awayTeam.team, homeTeam.team, key);
-          const homeAdv = getAdvantage(homeTeam.team, awayTeam.team, key);
-          const hasEdge = Math.abs(awayAdv - homeAdv) >= 3;
-          const edgeDir = awayAdv > homeAdv ? "away" : "home";
-          const maxVal = Math.max(+awayOff || 0, +homeOff || 0, 0.01);
-          const awayPct = Math.round(((+awayOff || 0) / maxVal) * 100);
-          const homePct = Math.round(((+homeOff || 0) / maxVal) * 100);
-
-          return (
-            <div key={key} style={{ marginBottom: 12 }}>
-              <div style={{ textAlign: "center", fontSize: 9, color: "#475569", letterSpacing: 1, marginBottom: 3 }}>{label}</div>
-              <div style={{ display: "grid", gridTemplateColumns: "76px 1fr 48px 1fr 76px", alignItems: "center", gap: 6 }}>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: rankColor(awayOffR, TOTAL) }}>{fmt(awayOff, key)}</div>
-                  <div style={{ fontSize: 8, color: "#334155" }}>off #{awayOffR}</div>
-                </div>
-                <div style={{ height: 5, background: "#111118", borderRadius: 3, overflow: "hidden", display: "flex", justifyContent: "flex-end" }}>
-                  <div style={{ height: "100%", width: `${awayPct}%`, background: awayColors.color, borderRadius: 3, opacity: 0.8 }} />
-                </div>
-                <div style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: hasEdge ? (edgeDir === "away" ? awayColors.color : homeColors.color) : "#1e293b" }}>
-                  {hasEdge ? (edgeDir === "away" ? "←" : "→") : "·"}
-                </div>
-                <div style={{ height: 5, background: "#111118", borderRadius: 3, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${homePct}%`, background: homeColors.color, borderRadius: 3, opacity: 0.8 }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: rankColor(homeOffR, TOTAL) }}>{fmt(homeOff, key)}</div>
-                  <div style={{ fontSize: 8, color: "#334155" }}>off #{homeOffR}</div>
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "76px 1fr 48px 1fr 76px", gap: 6, marginTop: 2 }}>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 10, color: "#64748b" }}>vs {fmt(homeAllows, key)} allowed</div>
-                  <div style={{ fontSize: 8, color: "#1e293b" }}>home def #{homeDefR}</div>
-                </div>
-                <div /><div /><div />
-                <div>
-                  <div style={{ fontSize: 10, color: "#64748b" }}>vs {fmt(awayAllows, key)} allowed</div>
-                  <div style={{ fontSize: 8, color: "#1e293b" }}>away def #{awayDefR}</div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-
-        {/* Edge summary */}
-        <div style={{ marginTop: 14, padding: "10px 14px", background: "#07070e", borderRadius: 7, border: "1px solid #111118" }}>
-          <div style={{ fontSize: 9, color: "#334155", letterSpacing: 1, marginBottom: 8 }}>EDGE SUMMARY · 2025 SEASON RANKS</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {MATCHUP_COLS.map(({ key, label }) => {
-              const awayA = getAdvantage(awayTeam.team, homeTeam.team, key);
-              const homeA = getAdvantage(homeTeam.team, awayTeam.team, key);
-              const winner = awayA > homeA ? "away" : homeA > awayA ? "home" : "push";
-              const diff = Math.abs(awayA - homeA);
-              const c = winner === "away" ? awayColors.color : winner === "home" ? homeColors.color : "#475569";
-              const abbr = winner === "away" ? game.away.abbr : winner === "home" ? game.home.abbr : null;
-              return (
-                <div key={key} style={{ padding: "4px 9px", borderRadius: 4, fontSize: 9, fontWeight: 600, background: `${c}18`, border: `1px solid ${c}44`, color: c }}>
-                  {label}: {abbr ? `${abbr} +${diff}` : "EVEN"}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </>
-    );
-  }
+  // For a given stat, which team has the better value?
+  // "better" depends on the stat and the side being viewed
+  const getBetter = (key: StatKey, awayVal: number, homeVal: number): "away" | "home" | "even" => {
+    const col = MATCHUP_COLS.find(c => c.key === key);
+    const hiB = side === "off" ? (col?.offHiB ?? true) : (col?.oppHiB ?? false);
+    const diff = Math.abs(awayVal - homeVal);
+    if (diff < 0.05) return "even";
+    return hiB ? (awayVal > homeVal ? "away" : "home") : (awayVal < homeVal ? "away" : "home");
+  };
 
   return (
     <div style={{ background: "#0d0d1a", border: "1px solid #1e1e3a", borderRadius: 10, overflow: "hidden", marginBottom: 14, ...mono }}>
+
       {/* Game header */}
       <div onClick={() => setOpen(o => !o)} style={{ cursor: "pointer", padding: "14px 18px", background: "#0a0a16", borderBottom: open ? "1px solid #1e1e3a" : "none" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
@@ -253,22 +124,146 @@ function MatchupCard({ game }: { game: Game }) {
       {/* Body */}
       {open && (
         <div style={{ padding: "14px 18px" }}>
-          {/* View toggle */}
-          <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-            <span style={{ fontSize: 9, color: "#334155", letterSpacing: 1, marginRight: 4 }}>VIEW:</span>
-            {mViewBtn("off-vs-def", "⚡ OFF vs DEF")}
-            {awayTeam && mViewBtn("away-off", `${game.away.abbr} Offense`, awayColors.color)}
-            {awayTeam && mViewBtn("away-def", `${game.away.abbr} Defense`, awayColors.color)}
-            {homeTeam && mViewBtn("home-off", `${game.home.abbr} Offense`, homeColors.color)}
-            {homeTeam && mViewBtn("home-def", `${game.home.abbr} Defense`, homeColors.color)}
-          </div>
+          {(!awayTeam || !homeTeam) ? (
+            <div style={{ color: "#475569", fontSize: 11, textAlign: "center", padding: 20 }}>
+              No 2025 season data for one or both teams.
+            </div>
+          ) : (
+            <>
+              {/* OFF / DEF toggle */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                <span style={{ fontSize: 9, color: "#475569", letterSpacing: 1 }}>VIEWING:</span>
+                <button onClick={() => setSide("off")} style={{
+                  background: side === "off" ? "#f9731622" : "transparent",
+                  border: `1px solid ${side === "off" ? "#f97316" : "#2d2d4e"}`,
+                  color: side === "off" ? "#f97316" : "#64748b",
+                  padding: "5px 16px", borderRadius: 6, cursor: "pointer",
+                  fontSize: 10, fontWeight: side === "off" ? 700 : 400, letterSpacing: 1, ...mono,
+                }}>
+                  OFFENSE
+                </button>
+                <button onClick={() => setSide("def")} style={{
+                  background: side === "def" ? "#ec489922" : "transparent",
+                  border: `1px solid ${side === "def" ? "#ec4899" : "#2d2d4e"}`,
+                  color: side === "def" ? "#ec4899" : "#64748b",
+                  padding: "5px 16px", borderRadius: 6, cursor: "pointer",
+                  fontSize: 10, fontWeight: side === "def" ? 700 : 400, letterSpacing: 1, ...mono,
+                }}>
+                  DEFENSE
+                </button>
+                <span style={{ fontSize: 9, color: "#334155", marginLeft: 4 }}>
+                  {side === "off" ? "— points/stats each team scores" : "— points/stats each team allows"}
+                </span>
+              </div>
 
-          {/* Content */}
-          {mView === "off-vs-def" && <HeadToHeadView />}
-          {mView === "away-off" && awayTeam && <SingleTeamTable team={awayTeam} side="off" teamColors={awayColors} />}
-          {mView === "away-def" && awayTeam && <SingleTeamTable team={awayTeam} side="def" teamColors={awayColors} />}
-          {mView === "home-off" && homeTeam && <SingleTeamTable team={homeTeam} side="off" teamColors={homeColors} />}
-          {mView === "home-def" && homeTeam && <SingleTeamTable team={homeTeam} side="def" teamColors={homeColors} />}
+              {/* Comparison table */}
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: "#080810" }}>
+                      {/* Away team header */}
+                      <th style={{ padding: "10px 14px", textAlign: "left", borderBottom: "2px solid #1e1e3a", minWidth: 80 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ width: 3, height: 20, borderRadius: 2, background: awayColors.color }} />
+                          <div>
+                            <div style={{ color: awayColors.color, fontWeight: 700, fontSize: 11, letterSpacing: 1 }}>{game.away.abbr}</div>
+                            <div style={{ color: "#334155", fontSize: 8, letterSpacing: 1 }}>{side === "off" ? "OFFENSE" : "DEFENSE"}</div>
+                          </div>
+                        </div>
+                      </th>
+                      {/* Stat label header */}
+                      <th style={{ padding: "10px 12px", textAlign: "center", borderBottom: "2px solid #1e1e3a", color: "#475569", fontSize: 9, letterSpacing: 1, fontWeight: 600, minWidth: 60 }}>
+                        STAT
+                      </th>
+                      {/* Home team header */}
+                      <th style={{ padding: "10px 14px", textAlign: "right", borderBottom: "2px solid #1e1e3a", minWidth: 80 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+                          <div>
+                            <div style={{ color: homeColors.color, fontWeight: 700, fontSize: 11, letterSpacing: 1, textAlign: "right" }}>{game.home.abbr}</div>
+                            <div style={{ color: "#334155", fontSize: 8, letterSpacing: 1, textAlign: "right" }}>{side === "off" ? "OFFENSE" : "DEFENSE"}</div>
+                          </div>
+                          <div style={{ width: 3, height: 20, borderRadius: 2, background: homeColors.color }} />
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {MATCHUP_COLS.map(({ key, label, desc }, i) => {
+                      const awayVal = getStats(awayTeam)[key] ?? 0;
+                      const homeVal = getStats(homeTeam)[key] ?? 0;
+                      const awayRank = getRanks(key, awayTeam.team);
+                      const homeRank = getRanks(key, homeTeam.team);
+                      const better = getBetter(key, awayVal, homeVal);
+
+                      // Bar widths: each side max 100% of its column
+                      const maxVal = Math.max(awayVal, homeVal, 0.01);
+                      const awayPct = Math.round((awayVal / maxVal) * 100);
+                      const homePct = Math.round((homeVal / maxVal) * 100);
+
+                      return (
+                        <tr key={key} style={{ background: i % 2 === 0 ? "#08080d" : "#0a0a12", borderBottom: "1px solid #111118" }}>
+                          {/* Away value */}
+                          <td style={{ padding: "10px 14px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              {/* Value + rank */}
+                              <div style={{ minWidth: 52, textAlign: "right" }}>
+                                <div style={{
+                                  fontSize: 16, fontWeight: 700,
+                                  color: better === "away" ? "#4ade80" : rankColor(awayRank, TOTAL),
+                                }}>
+                                  {fmt(awayVal, key)}
+                                  {better === "away" && <span style={{ fontSize: 9, marginLeft: 4, color: "#4ade80" }}>▲</span>}
+                                </div>
+                                <div style={{ fontSize: 8, color: "#334155" }}>#{awayRank} league</div>
+                              </div>
+                              {/* Bar (right-aligned, grows toward center) */}
+                              <div style={{ flex: 1, height: 6, background: "#111118", borderRadius: 3, overflow: "hidden", display: "flex", justifyContent: "flex-end" }}>
+                                <div style={{ height: "100%", width: `${awayPct}%`, background: better === "away" ? "#4ade80" : awayColors.color, borderRadius: 3, opacity: 0.85 }} />
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Stat label */}
+                          <td style={{ padding: "10px 6px", textAlign: "center" }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: 1 }}>{label}</div>
+                            <div style={{ fontSize: 8, color: "#1e293b", marginTop: 1 }}>{desc}</div>
+                          </td>
+
+                          {/* Home value */}
+                          <td style={{ padding: "10px 14px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              {/* Bar (left-aligned, grows toward center) */}
+                              <div style={{ flex: 1, height: 6, background: "#111118", borderRadius: 3, overflow: "hidden" }}>
+                                <div style={{ height: "100%", width: `${homePct}%`, background: better === "home" ? "#4ade80" : homeColors.color, borderRadius: 3, opacity: 0.85 }} />
+                              </div>
+                              {/* Value + rank */}
+                              <div style={{ minWidth: 52 }}>
+                                <div style={{
+                                  fontSize: 16, fontWeight: 700,
+                                  color: better === "home" ? "#4ade80" : rankColor(homeRank, TOTAL),
+                                }}>
+                                  {better === "home" && <span style={{ fontSize: 9, marginRight: 4, color: "#4ade80" }}>▲</span>}
+                                  {fmt(homeVal, key)}
+                                </div>
+                                <div style={{ fontSize: 8, color: "#334155", textAlign: "right" }}>#{homeRank} league</div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Legend */}
+              <div style={{ marginTop: 10, fontSize: 8, color: "#334155", letterSpacing: 1, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <span><span style={{ color: "#4ade80" }}>▲</span> = BETTER VALUE IN THIS MATCHUP</span>
+                <span>RANK = OUT OF {TOTAL} TEAMS · 2025 FULL SEASON</span>
+                {side === "def" && <span style={{ color: "#ec4899" }}>DEFENSE: LOWER PTS/REB/AST ALLOWED = BETTER</span>}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -455,17 +450,10 @@ export default function Page() {
                 {loading ? "⟳ LOADING…" : "↺ REFRESH"}
               </button>
             </div>
-
-            {loading && (
-              <div style={{ textAlign: "center", padding: 60, color: "#475569" }}>
-                <div style={{ fontSize: 28, marginBottom: 10 }}>⟳</div>
-                <div style={{ fontSize: 11, letterSpacing: 2 }}>LOADING…</div>
-              </div>
-            )}
+            {loading && <div style={{ textAlign: "center", padding: 60, color: "#475569" }}><div style={{ fontSize: 28, marginBottom: 10 }}>⟳</div><div style={{ fontSize: 11, letterSpacing: 2 }}>LOADING…</div></div>}
             {error && !loading && (
               <div style={{ background: "#130a0a", border: "1px solid #7f1d1d", borderRadius: 8, padding: 20, color: "#fca5a5", fontSize: 11, textAlign: "center" }}>
-                ⚠ {error}
-                <br /><br />
+                ⚠ {error}<br /><br />
                 <button onClick={loadGames} style={{ background: "transparent", border: "1px solid #7f1d1d", color: "#fca5a5", padding: "5px 12px", borderRadius: 5, cursor: "pointer", fontSize: 10, ...mono }}>Try Again</button>
               </div>
             )}
@@ -479,7 +467,6 @@ export default function Page() {
             {!loading && games.map(g => <MatchupCard key={g.id} game={g} />)}
           </div>
         )}
-
         {tab === "stats" && <StatsTable />}
       </div>
     </div>
