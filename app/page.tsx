@@ -45,36 +45,61 @@ function ViewBtn({ active, onClick, children }: { active: boolean; onClick: () =
   );
 }
 
-// ── Matchup Card ──────────────────────────────────────────────────────────────
 type StatSide = "off" | "def";
 
+// Small toggle pill: OFF | DEF
+function SideToggle({ value, onChange, color }: { value: StatSide; onChange: (s: StatSide) => void; color: string }) {
+  const base: React.CSSProperties = { padding: "3px 10px", fontSize: 9, fontWeight: 700, letterSpacing: 1, cursor: "pointer", border: "none", ...mono };
+  return (
+    <div style={{ display: "inline-flex", borderRadius: 5, overflow: "hidden", border: "1px solid #2d2d4e" }}>
+      <button onClick={() => onChange("off")} style={{
+        ...base,
+        background: value === "off" ? color : "#0d0d1a",
+        color: value === "off" ? "#000" : "#475569",
+      }}>OFF</button>
+      <button onClick={() => onChange("def")} style={{
+        ...base,
+        background: value === "def" ? color : "#0d0d1a",
+        color: value === "def" ? "#000" : "#475569",
+        borderLeft: "1px solid #2d2d4e",
+      }}>DEF</button>
+    </div>
+  );
+}
+
+// ── Matchup Card ──────────────────────────────────────────────────────────────
 function MatchupCard({ game }: { game: Game }) {
   const [open, setOpen] = useState(true);
-  const [side, setSide] = useState<StatSide>("off");
+  const [awaySide, setAwaySide] = useState<StatSide>("off");
+  const [homeSide, setHomeSide] = useState<StatSide>("def");
 
   const awayTeam = getTeam(game.away.displayName);
   const homeTeam = getTeam(game.home.displayName);
-  const awayColors = TEAM_COLORS[ESPN_NAME_MAP[game.away.displayName] ?? ""] ?? { color: "#475569", alt: "#1e293b" };
-  const homeColors = TEAM_COLORS[ESPN_NAME_MAP[game.home.displayName] ?? ""] ?? { color: "#475569", alt: "#1e293b" };
+  const awayColors = TEAM_COLORS[ESPN_NAME_MAP[game.away.displayName] ?? ""] ?? { color: "#f97316", alt: "#1e293b" };
+  const homeColors = TEAM_COLORS[ESPN_NAME_MAP[game.home.displayName] ?? ""] ?? { color: "#ec4899", alt: "#1e293b" };
 
   const isLive = game.status === "In Progress" || game.statusDetail?.includes("Q") || game.statusDetail?.includes("Half");
   const isFinal = game.status === "Final";
   const gameTime = new Date(game.date).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 
-  // Which stats + ranks to use based on toggle
-  const getStats = (team: Team) => side === "off" ? team.off : team.opp;
-  const getRanks = (key: StatKey, teamName: string) =>
+  const getStats  = (team: Team, side: StatSide) => side === "off" ? team.off : team.opp;
+  const getRank   = (key: StatKey, teamName: string, side: StatSide) =>
     side === "off" ? OFF_RANKS[key]?.[teamName] : OPP_RANKS[key]?.[teamName];
 
-  // For a given stat, which team has the better value?
-  // "better" depends on the stat and the side being viewed
+  // Is the away value "better" than home for this specific combo of sides?
   const getBetter = (key: StatKey, awayVal: number, homeVal: number): "away" | "home" | "even" => {
+    if (Math.abs(awayVal - homeVal) < 0.05) return "even";
     const col = MATCHUP_COLS.find(c => c.key === key);
-    const hiB = side === "off" ? (col?.offHiB ?? true) : (col?.oppHiB ?? false);
-    const diff = Math.abs(awayVal - homeVal);
-    if (diff < 0.05) return "even";
+    // When comparing off vs def (or any mix), we want to know which number is higher/lower
+    // For scoring stats (PTS, REB, AST, 3PM, 3PA, 3P%, FG%, OREB): higher = better for OFF, lower = better for DEF
+    // For TOV: lower = better for OFF, higher = better for DEF (you want opp to turn it over more)
+    // Simplest rule: use the side of the LEFT column to determine directionality
+    const hiB = awaySide === "off" ? (col?.offHiB ?? true) : (col?.oppHiB ?? false);
     return hiB ? (awayVal > homeVal ? "away" : "home") : (awayVal < homeVal ? "away" : "home");
   };
+
+  const sideLabel = (side: StatSide) => side === "off" ? "OFFENSE" : "DEFENSE";
+  const sideDesc  = (side: StatSide) => side === "off" ? "points/stats scored" : "points/stats allowed";
 
   return (
     <div style={{ background: "#0d0d1a", border: "1px solid #1e1e3a", borderRadius: 10, overflow: "hidden", marginBottom: 14, ...mono }}>
@@ -83,7 +108,6 @@ function MatchupCard({ game }: { game: Game }) {
       <div onClick={() => setOpen(o => !o)} style={{ cursor: "pointer", padding: "14px 18px", background: "#0a0a16", borderBottom: open ? "1px solid #1e1e3a" : "none" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-            {/* Away */}
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <img src={`https://a.espncdn.com/i/teamlogos/wnba/500/${game.away.abbr.toLowerCase()}.png`}
                 style={{ width: 34, height: 34, objectFit: "contain" }} alt=""
@@ -95,7 +119,6 @@ function MatchupCard({ game }: { game: Game }) {
               {(isLive || isFinal) && <div style={{ fontSize: 22, fontWeight: 800, color: "#f1f5f9", minWidth: 30, textAlign: "right" }}>{game.away.score ?? "—"}</div>}
             </div>
             <div style={{ color: "#2d2d4e", fontSize: 13, fontWeight: 700 }}>@</div>
-            {/* Home */}
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {(isLive || isFinal) && <div style={{ fontSize: 22, fontWeight: 800, color: "#f1f5f9", minWidth: 30 }}>{game.home.score ?? "—"}</div>}
               <div>
@@ -130,93 +153,68 @@ function MatchupCard({ game }: { game: Game }) {
             </div>
           ) : (
             <>
-              {/* OFF / DEF toggle */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-                <span style={{ fontSize: 9, color: "#475569", letterSpacing: 1 }}>VIEWING:</span>
-                <button onClick={() => setSide("off")} style={{
-                  background: side === "off" ? "#f9731622" : "transparent",
-                  border: `1px solid ${side === "off" ? "#f97316" : "#2d2d4e"}`,
-                  color: side === "off" ? "#f97316" : "#64748b",
-                  padding: "5px 16px", borderRadius: 6, cursor: "pointer",
-                  fontSize: 10, fontWeight: side === "off" ? 700 : 400, letterSpacing: 1, ...mono,
-                }}>
-                  OFFENSE
-                </button>
-                <button onClick={() => setSide("def")} style={{
-                  background: side === "def" ? "#ec489922" : "transparent",
-                  border: `1px solid ${side === "def" ? "#ec4899" : "#2d2d4e"}`,
-                  color: side === "def" ? "#ec4899" : "#64748b",
-                  padding: "5px 16px", borderRadius: 6, cursor: "pointer",
-                  fontSize: 10, fontWeight: side === "def" ? 700 : 400, letterSpacing: 1, ...mono,
-                }}>
-                  DEFENSE
-                </button>
-                <span style={{ fontSize: 9, color: "#334155", marginLeft: 4 }}>
-                  {side === "off" ? "— points/stats each team scores" : "— points/stats each team allows"}
-                </span>
-              </div>
-
               {/* Comparison table */}
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: "#080810" }}>
-                      {/* Away team header */}
-                      <th style={{ padding: "10px 14px", textAlign: "left", borderBottom: "2px solid #1e1e3a", minWidth: 80 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <div style={{ width: 3, height: 20, borderRadius: 2, background: awayColors.color }} />
+                      {/* Away header with toggle */}
+                      <th style={{ padding: "10px 14px", textAlign: "left", borderBottom: "2px solid #1e1e3a", minWidth: 160 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <div style={{ width: 3, height: 28, borderRadius: 2, background: awayColors.color, flexShrink: 0 }} />
                           <div>
-                            <div style={{ color: awayColors.color, fontWeight: 700, fontSize: 11, letterSpacing: 1 }}>{game.away.abbr}</div>
-                            <div style={{ color: "#334155", fontSize: 8, letterSpacing: 1 }}>{side === "off" ? "OFFENSE" : "DEFENSE"}</div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                              <span style={{ color: awayColors.color, fontWeight: 700, fontSize: 12, letterSpacing: 1 }}>{game.away.abbr}</span>
+                              <SideToggle value={awaySide} onChange={setAwaySide} color={awayColors.color} />
+                            </div>
+                            <div style={{ color: "#334155", fontSize: 8, letterSpacing: 1 }}>{sideDesc(awaySide)}</div>
                           </div>
                         </div>
                       </th>
-                      {/* Stat label header */}
-                      <th style={{ padding: "10px 12px", textAlign: "center", borderBottom: "2px solid #1e1e3a", color: "#475569", fontSize: 9, letterSpacing: 1, fontWeight: 600, minWidth: 60 }}>
+
+                      {/* Stat label */}
+                      <th style={{ padding: "10px 12px", textAlign: "center", borderBottom: "2px solid #1e1e3a", color: "#334155", fontSize: 9, letterSpacing: 1, fontWeight: 600, minWidth: 60 }}>
                         STAT
                       </th>
-                      {/* Home team header */}
-                      <th style={{ padding: "10px 14px", textAlign: "right", borderBottom: "2px solid #1e1e3a", minWidth: 80 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
-                          <div>
-                            <div style={{ color: homeColors.color, fontWeight: 700, fontSize: 11, letterSpacing: 1, textAlign: "right" }}>{game.home.abbr}</div>
-                            <div style={{ color: "#334155", fontSize: 8, letterSpacing: 1, textAlign: "right" }}>{side === "off" ? "OFFENSE" : "DEFENSE"}</div>
+
+                      {/* Home header with toggle */}
+                      <th style={{ padding: "10px 14px", textAlign: "right", borderBottom: "2px solid #1e1e3a", minWidth: 160 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "flex-end" }}>
+                          <div style={{ textAlign: "right" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, justifyContent: "flex-end" }}>
+                              <SideToggle value={homeSide} onChange={setHomeSide} color={homeColors.color} />
+                              <span style={{ color: homeColors.color, fontWeight: 700, fontSize: 12, letterSpacing: 1 }}>{game.home.abbr}</span>
+                            </div>
+                            <div style={{ color: "#334155", fontSize: 8, letterSpacing: 1 }}>{sideDesc(homeSide)}</div>
                           </div>
-                          <div style={{ width: 3, height: 20, borderRadius: 2, background: homeColors.color }} />
+                          <div style={{ width: 3, height: 28, borderRadius: 2, background: homeColors.color, flexShrink: 0 }} />
                         </div>
                       </th>
                     </tr>
                   </thead>
                   <tbody>
                     {MATCHUP_COLS.map(({ key, label, desc }, i) => {
-                      const awayVal = getStats(awayTeam)[key] ?? 0;
-                      const homeVal = getStats(homeTeam)[key] ?? 0;
-                      const awayRank = getRanks(key, awayTeam.team);
-                      const homeRank = getRanks(key, homeTeam.team);
+                      const awayVal = getStats(awayTeam, awaySide)[key] ?? 0;
+                      const homeVal = getStats(homeTeam, homeSide)[key] ?? 0;
+                      const awayRank = getRank(key, awayTeam.team, awaySide);
+                      const homeRank = getRank(key, homeTeam.team, homeSide);
                       const better = getBetter(key, awayVal, homeVal);
-
-                      // Bar widths: each side max 100% of its column
                       const maxVal = Math.max(awayVal, homeVal, 0.01);
                       const awayPct = Math.round((awayVal / maxVal) * 100);
                       const homePct = Math.round((homeVal / maxVal) * 100);
 
                       return (
                         <tr key={key} style={{ background: i % 2 === 0 ? "#08080d" : "#0a0a12", borderBottom: "1px solid #111118" }}>
-                          {/* Away value */}
+                          {/* Away value + bar */}
                           <td style={{ padding: "10px 14px" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                              {/* Value + rank */}
-                              <div style={{ minWidth: 52, textAlign: "right" }}>
-                                <div style={{
-                                  fontSize: 16, fontWeight: 700,
-                                  color: better === "away" ? "#4ade80" : rankColor(awayRank, TOTAL),
-                                }}>
+                              <div style={{ minWidth: 56, textAlign: "right" }}>
+                                <div style={{ fontSize: 16, fontWeight: 700, color: better === "away" ? "#4ade80" : rankColor(awayRank, TOTAL) }}>
                                   {fmt(awayVal, key)}
-                                  {better === "away" && <span style={{ fontSize: 9, marginLeft: 4, color: "#4ade80" }}>▲</span>}
+                                  {better === "away" && <span style={{ fontSize: 9, marginLeft: 3, color: "#4ade80" }}>▲</span>}
                                 </div>
                                 <div style={{ fontSize: 8, color: "#334155" }}>#{awayRank} league</div>
                               </div>
-                              {/* Bar (right-aligned, grows toward center) */}
                               <div style={{ flex: 1, height: 6, background: "#111118", borderRadius: 3, overflow: "hidden", display: "flex", justifyContent: "flex-end" }}>
                                 <div style={{ height: "100%", width: `${awayPct}%`, background: better === "away" ? "#4ade80" : awayColors.color, borderRadius: 3, opacity: 0.85 }} />
                               </div>
@@ -229,20 +227,15 @@ function MatchupCard({ game }: { game: Game }) {
                             <div style={{ fontSize: 8, color: "#1e293b", marginTop: 1 }}>{desc}</div>
                           </td>
 
-                          {/* Home value */}
+                          {/* Home bar + value */}
                           <td style={{ padding: "10px 14px" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                              {/* Bar (left-aligned, grows toward center) */}
                               <div style={{ flex: 1, height: 6, background: "#111118", borderRadius: 3, overflow: "hidden" }}>
                                 <div style={{ height: "100%", width: `${homePct}%`, background: better === "home" ? "#4ade80" : homeColors.color, borderRadius: 3, opacity: 0.85 }} />
                               </div>
-                              {/* Value + rank */}
-                              <div style={{ minWidth: 52 }}>
-                                <div style={{
-                                  fontSize: 16, fontWeight: 700,
-                                  color: better === "home" ? "#4ade80" : rankColor(homeRank, TOTAL),
-                                }}>
-                                  {better === "home" && <span style={{ fontSize: 9, marginRight: 4, color: "#4ade80" }}>▲</span>}
+                              <div style={{ minWidth: 56 }}>
+                                <div style={{ fontSize: 16, fontWeight: 700, color: better === "home" ? "#4ade80" : rankColor(homeRank, TOTAL) }}>
+                                  {better === "home" && <span style={{ fontSize: 9, marginRight: 3, color: "#4ade80" }}>▲</span>}
                                   {fmt(homeVal, key)}
                                 </div>
                                 <div style={{ fontSize: 8, color: "#334155", textAlign: "right" }}>#{homeRank} league</div>
@@ -256,11 +249,9 @@ function MatchupCard({ game }: { game: Game }) {
                 </table>
               </div>
 
-              {/* Legend */}
-              <div style={{ marginTop: 10, fontSize: 8, color: "#334155", letterSpacing: 1, display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ marginTop: 8, fontSize: 8, color: "#334155", letterSpacing: 1, display: "flex", gap: 16, flexWrap: "wrap" }}>
                 <span><span style={{ color: "#4ade80" }}>▲</span> = BETTER VALUE IN THIS MATCHUP</span>
-                <span>RANK = OUT OF {TOTAL} TEAMS · 2025 FULL SEASON</span>
-                {side === "def" && <span style={{ color: "#ec4899" }}>DEFENSE: LOWER PTS/REB/AST ALLOWED = BETTER</span>}
+                <span>RANK OUT OF {TOTAL} TEAMS · 2025 FULL SEASON</span>
               </div>
             </>
           )}
@@ -309,7 +300,6 @@ function StatsTable() {
           {view === "split" && <><span style={{ color: "#f97316" }}>TOP=OFF</span><span style={{ color: "#ec4899" }}>BTM=OPP</span></>}
         </div>
       </div>
-
       <div style={{ overflowX: "auto", borderRadius: 8, border: "1px solid #151520" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
           <thead>
@@ -355,7 +345,6 @@ function StatsTable() {
           </tbody>
         </table>
       </div>
-
       {selected && (
         <div style={{ marginTop: 14, background: "#0d0d1a", border: `1px solid ${selected.color}44`, borderRadius: 10, padding: 18, ...mono }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -394,8 +383,7 @@ export default function Page() {
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
 
   const loadGames = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    setLoading(true); setError(null);
     try {
       const res = await fetch("/api/scoreboard");
       const data = await res.json();
@@ -404,9 +392,7 @@ export default function Page() {
       setLastFetch(new Date());
     } catch (e: any) {
       setError(e.message ?? "Failed to load schedule");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }, []);
 
   useEffect(() => {
